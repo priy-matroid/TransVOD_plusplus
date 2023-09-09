@@ -3,6 +3,6 @@ tqdm
 cython
 scipy
 mmcv-full
-mmdet
+mmdet==2.28.2
 wandb
 timm

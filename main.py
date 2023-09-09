@@ -148,7 +148,7 @@ def get_args_parser():
 
 
 def main(args):
-    wandb.init(project="UAV_higher_res_single", name='_'.join(args.output_dir.split('/')))
+    wandb.init(project="Matroid Handoff Testing", name='_'.join(args.output_dir.split('/')))
     if args.dataset_file == "vid_single":
         from engine_single import evaluate, train_one_epoch
         import util.misc as utils
@@ -249,25 +249,6 @@ def main(args):
     print(args.lr_drop_epochs)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, args.lr_drop_epochs)
 
-    # optimizer = torch.optim.AdamW(model_without_ddp.parameters(), lr=args.lr,
-    #                                   weight_decay=args.weight_decay)
-    
-    # from torch.optim.lr_scheduler import LambdaLR
-    # import math
-
-
-    
-
-    # def lr_lambda(current_step, total_steps=len(data_loader_train)*args.epochs, warmup_steps=len(data_loader_train)*int(0.2*args.epochs)):
-    #     if current_step < warmup_steps:
-    #         return float(current_step) / float(max(1, warmup_steps))
-    #     else:
-    #         progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-    #         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
-
-    # lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
-
-
 
 
     if args.distributed:
@@ -308,70 +289,7 @@ def main(args):
         model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
     output_dir = Path(args.output_dir)
-
-    # if args.pretrainedmodel:
-    #     # checkpoint = torch.load(args.pretrainedmodel)
-    #     # tmp_dict = checkpoint['model']
-    #     # for name, param in model_without_ddp.named_parameters(): # TODO PRIY
-    #     #     if ('temp' in name):
-    #     #         param.requires_grad = True
-    #     #     elif ('dynamic' in name):
-    #     #         param.requires_grad = True
-    #     #     else:
-    #     #         param.requires_grad = False
-    #     checkpoint = torch.load(args.pretrainedmodel)
-    #     checkpoint_state_dict = checkpoint['model']
-    #     curr_model_state_dict = model_without_ddp.state_dict()
-    #     conflict_params = []
-    #     for param_name in checkpoint_state_dict.keys():
-    #         if param_name in curr_model_state_dict.keys():
-    #             # need to check if same size
-    #             loaded_tensor_shape = checkpoint_state_dict[param_name].shape
-    #             current_model_tensor_shape = curr_model_state_dict[param_name].shape
-    #             if loaded_tensor_shape != current_model_tensor_shape:
-    #                 print(f"loaded checkpoint {param_name} is size {loaded_tensor_shape} and current model is size {current_model_tensor_shape}")
-    #                 conflict_params.append(param_name)
-    #         else:
-    #             print(f"loaded: {param_name} not in current model")
-    #     for conflict_param in conflict_params:
-    #         checkpoint_state_dict.pop(conflict_param)
-
-
-
-    #     missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint_state_dict, strict=False)
-    #     print("********************PRETRAINED LOADED*******************")
-    #     unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
-    #     if len(missing_keys) > 0:
-    #         print('Missing Keys: {}'.format(missing_keys))
-    #     if len(unexpected_keys) > 0:
-    #         print('Unexpected Keys: {}'.format(unexpected_keys))
-
-
-    #     for name, param in model_without_ddp.named_parameters():
-    #         if args.freeze_spatial:
-    #             if ('temp' in name):
-    #                 param.requires_grad = True
-    #             elif ('dynamic' in name):
-    #                 param.requires_grad = True
-    #             else:
-    #                 param.requires_grad = False
-    #         elif args.freeze_backbone:
-    #             if 'backbone' in name:
-    #                 param.requires_grad = False
-    #         else:
-    #             continue
-                
-    #     total_params_model = 0
-    #     total_params_with_grad = 0
-    #     for name, param in model_without_ddp.named_parameters():
-    #         if param.requires_grad:
-    #             total_params_with_grad += 1
-    #         total_params_model += 1
-    #     print("***************************************************************")
-    #     print(f"TOTAL PARAMS: {total_params_model}")
-    #     print(f"PARAMS WITH GRAD: {total_params_with_grad}")
-    #     print("***************************************************************")
-
+   
     
 
     if args.resume:
@@ -425,7 +343,7 @@ def main(args):
         print(f"PARAMS WITH GRAD: {total_params_with_grad}")
         print("***************************************************************")
 
-    if args.eval: # TODO
+    if args.eval: 
         test_stats, coco_evaluator, overall_result = evaluate(model, criterion, postprocessors,
                                               data_loader_val, base_ds, device, args.output_dir, args.data_root)
         if args.output_dir:
@@ -438,11 +356,6 @@ def main(args):
         print('done saving')
         return
 
-    # if args.eval or True: # TODO
-    #     test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-    #                                           data_loader_val, base_ds, device, args.output_dir, args.data_root)
-    #     if args.output_dir:
-    #         utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
     
 
     print("Start training")
@@ -469,10 +382,6 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-        #test_stats, coco_evaluator = evaluate(
-         #   model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
-        #)
-
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
@@ -487,10 +396,6 @@ def main(args):
                                               data_loader_val, base_ds, device, args.output_dir, args.data_root)
         
 
-            # cocoDt = coco_evaluator.coco_eval['bbox'].cocoDt
-            # cocoGt = coco_evaluator.coco_eval['bbox'].cocoGt
-
-            # cocoDt_dict = cocoDt.dataset
             output_path = os.path.join(args.output_dir, f"cocoDt_epoch{epoch}.json")
             print('saving results')
             with open(output_path, 'w') as json_file:
