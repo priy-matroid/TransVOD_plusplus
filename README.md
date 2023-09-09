@@ -114,6 +114,7 @@ Also in the file datasets/vid_multi.py, make sure the variable PATHS (at the bot
 First we will train the single frame modules. Place the single_pretrain_checkpoint.pth (from the google drive) in path/to/pretrain/single. Alter the run_vid_single_exp.py: 
 1. Make sure --data_root refers to the path/to/data/directory
 2. Make sure --resume refers to path/to/pretrain/single/single_pretrain_checkpoint.pth
+3. Make sure --num_classes is the number of classes plus 1. So if the classes are person and car then --num_classes should be 2+1=3. This is because we need to include the background class. 
 
 #### Single GPU Training
 ```
