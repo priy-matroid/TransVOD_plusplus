@@ -336,10 +336,16 @@ def build(image_set, args):
     #     "train_joint": [(root / "Data" , root / "annotations" / 'imagenet_vid_train_joint_30.json')],
     #     "val": [(root / "Data" / "VID", root / "annotations" / 'imagenet_vid_val.json')],
     # }
+    # PATHS = {
+    #     "train_vid": [(root, os.path.join(root, 'UAV_train_every10.json'), True, os.path.join(root, 'UAV_train_every10_ignores.json'))],
+    #     "val": [(root, os.path.join(root, 'UAV_val_every10.json'), False, os.path.join(root, 'UAV_val_every10_ignores.json'))]
+    # }
+
     PATHS = {
-        "train_vid": [(root, os.path.join(root, 'UAV_train_every10.json'), True, os.path.join(root, 'UAV_train_every10_ignores.json'))],
-        "val": [(root, os.path.join(root, 'UAV_val_every10.json'), False, os.path.join(root, 'UAV_val_every10_ignores.json'))]
+        "train_vid": [(root, os.path.join(root, 'CBP_coco_train.json'), True, None), (root, os.path.join(root, 'train_DET.json'), True, None)],
+        "val": [(root, os.path.join(root, 'CBP_coco_val.json'), True, None)]
     }
+
     datasets = []
     for (img_folder, ann_file, is_train, ann_ignores) in PATHS[image_set]:
         dataset = CocoDetection(img_folder, ann_file, ann_ignores, transforms=make_coco_transforms(image_set, args.img_side), is_train = is_train, interval1=args.interval1,

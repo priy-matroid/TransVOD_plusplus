@@ -216,15 +216,21 @@ def build(image_set, args):
     root = Path(args.vid_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
-    PATHS = {
-        "train_vid": [(root, os.path.join(root, 'UAV_train_every10.json'), True, os.path.join(root, 'UAV_train_every10_ignores.json'))],
-        "val": [(root, os.path.join(root, 'UAV_val_every10.json'), False, os.path.join(root, 'UAV_val_every10_ignores.json'))]
-    }
+    # PATHS = {
+    #     "train_vid": [(root, os.path.join(root, 'UAV_train_every10.json'), True, os.path.join(root, 'UAV_train_every10_ignores.json'))],
+    #     "val": [(root, os.path.join(root, 'UAV_val_every10.json'), False, os.path.join(root, 'UAV_val_every10_ignores.json'))]
+    # }
 
     # PATHS = {
     #     "train_vid": [(root, os.path.join(root, 'VisDrone_VID_train_overfit.json'), True, None)],
     #     "val": [(root, os.path.join(root, 'VisDrone_VID_train_overfit.json'), True, None)]
     # }
+
+    PATHS = {
+        "train_vid": [(root, os.path.join(root, 'CBP_coco_train.json'), True, None), (root, os.path.join(root, 'train_DET.json'), True, None)],
+        "val": [(root, os.path.join(root, 'CBP_coco_val.json'), True, None)]
+    }
+
     datasets = []
     print(args.img_side)
     for (img_folder, ann_file, is_train, ann_ignores) in PATHS[image_set]:
