@@ -100,61 +100,57 @@ Below, we provide checkpoints, training logs and inference logs of TransVOD++ in
 [DownLoad Link of Baidu Netdisk](https://pan.baidu.com/s/1_8hCRWCXCSvqD4fsUYPnKA)(password:shm7)
 
 
-
+## Recreate CBP Results
+Refer to Google Drive (Matroid interns 2023 / Video object detection) for checkpoints and annotations files mentioned below. 
 
 ### Dataset preparation
+Place CBP video frame data and single image data in path/to/data/directory. Also place annotation files for CBP video frame data and single image data in path/to/data/directory. Annotation files should be in COCO format with added video id and frame id information. Refer to CBP_coco_train.json, train_DET.json for example format of video data and single image data respectively. 
 
-1. Please download ILSVRC2015 DET and ILSVRC2015 VID dataset from [here](https://image-net.org/challenges/LSVRC/2015/2015-downloads). Then we covert jsons of two datasets by using the [code](https://github.com/open-mmlab/mmtracking/blob/master/tools/convert_datasets/ilsvrc/). You can directly download the joint json file [json](https://drive.google.com/drive/folders/1cCXY41IFsLT-P06xlPAGptG7sc-zmGKF?usp=sharing)  of the two datasets that we have already converted. After that, we recommend to symlink the path to the datasets to datasets/. And the path structure should be as follows:
+In the file datasets/vid_single.py, make sure the variable PATHS (at the bottom of the file) contains the correct names of the annotations files. 
 
+Also in the file datasets/vid_multi.py, make sure the variable PATHS (at the bottom of the file) contains the correct names of the annotations files. 
+
+### Training single frame modules
+First we will train the single frame modules. Place the single_pretrain_checkpoint.pth (from the google drive) in path/to/pretrain/single. Alter the run_vid_single_exp.py: 
+1. Make sure --data_root refers to the path/to/data/directory
+2. Make sure --resume refers to path/to/pretrain/single/single_pretrain_checkpoint.pth
+
+#### Single GPU Training
 ```
-code_root/
-└── data/
-    └── vid/
-        ├── Data
-            ├── VID/
-            └── DET/
-        └── annotations/
-        	  ├── imagenet_vid_train.json
-              ├── imagenet_vid_train_joint_30.json
-        	  └── imagenet_vid_val.json
-
-```
-
-### Training
-We use Swin Transformer as the network backbone. We train our TransVOD with Swin-base as backbone as following:
-
-#### Training on single node
-1. Train SingleFrameBaseline. You can download COCO pretrained weights from the aforementioned download link.
-   
-```bash 
-GPUS_PER_NODE=8 ./tools/run_dist_launch.sh $1 swinb $2 configs/swinb_train_single.sh
-```  
-2. Train TransVOD Lite. Using the model weights of SingleBaseline as the resume model.
-
-```bash 
-GPUS_PER_NODE=8 ./tools/run_dist_launch.sh $1 swinb $2 configs/swinb_train_multi.sh
-``` 
-
-
-#### Training on slurm cluster
-If you are using slurm cluster, you can simply run the following command to train on 1 node with 8 GPUs:
-```bash
-GPUS_PER_NODE=8 ./tools/run_dist_slurm.sh <partition> swinb 8 configs/swinb_train_multi.sh
+python run_vid_single_exp.py
 ```
 
-### Evaluation
-You can get the config file and pretrained model of TransVOD++ (the link is in "Checkpoint" session), then put the pretrained_model into correponding folder.
+#### Distributed Training
+Make sure to copy the arguments in run_vid_single_exp.py to swinb_train_single.sh. 
+
+ ```
+GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 configs/swinb_train_single.sh
 ```
-code_root/
-└── exps/
-    └── our_models/
-        ├── COCO_pretrained_model
-        ├── exps_single
-        └── exps_multi
+
+### Training multi frame modules
+After training the single frame modules, save the desired checkpoint to path/to/single/checkpoint.pth
+1. Make sure --data_root refers to the path/to/data/directory
+2. Make sure --resume refers to path/to/single/checkpoint.pth
+
+#### Single GPU Training
 ```
-And then run following command to evaluate it on ImageNET VID validation set:
-```bash 
-GPUS_PER_NODE=8 ./tools/run_dist_launch.sh $1 eval_swinb $2 configs/swinb_eval_multi.sh
+python run_vid_multi_exp.py
+```
+
+#### Distributed Training
+Make sure to copy the arguments in run_vid_multi_exp.py to swinb_train_multi.sh. 
+
+ ```
+GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 configs/swinb_train_multi.sh
+```
+
+### Evaluate
+1. Make sure --resume refers to path/to/model.pth
+
+In run_vid_multi_exp.py, uncomment the --eval. 
+
+```
+python run_vid_multi_exp.py
 ```
 
 ## Acknowledgements
