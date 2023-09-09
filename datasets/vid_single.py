@@ -23,13 +23,35 @@ from .torchvision_datasets import CocoDetection as TvCocoDetection
 from util.misc import get_local_rank, get_local_size
 import datasets.transforms_single as T
 from torch.utils.data.dataset import ConcatDataset
+import os
+from pycocotools.coco import COCO
+import numpy as np
+from PIL import Image
 
 class CocoDetection(TvCocoDetection):
-    def __init__(self, img_folder, ann_file, transforms, return_masks, cache_mode=False, local_rank=0, local_size=1):
+    def __init__(self, img_folder, ann_file, ann_ignores, transforms, is_train, return_masks, cache_mode=False, local_rank=0, local_size=1):
         super(CocoDetection, self).__init__(img_folder, ann_file,
                                             cache_mode=cache_mode, local_rank=local_rank, local_size=local_size)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
+        self.is_train = is_train
+        if self.is_train:
+            self.ids_train = []
+            img_infos = self.coco.loadImgs(self.ids)
+            for img_info in img_infos:
+                if img_info['is_vid_train_frame']:
+                    self.ids_train.append(img_info['id'])
+        if ann_ignores:
+            self.coco_ignores = COCO(ann_ignores)
+        else:
+            self.coco_ignores = None
+
+
+    def __len__(self):
+        if self.is_train:
+            return len(self.ids_train)
+        else:
+            return len(self.ids)
 
     def __getitem__(self, idx):
         """
@@ -38,9 +60,12 @@ class CocoDetection(TvCocoDetection):
         Returns:
             tuple: Tuple (image, target). target is the object returned by ``coco.loadAnns``.
         """
-        # idx若为675834，则img_id为675835(img_id=idx+1)
+        
         coco = self.coco
-        img_id = self.ids[idx]
+        if self.is_train:
+            img_id = self.ids_train[idx]
+        else:
+            img_id = self.ids[idx]
         ann_ids = coco.getAnnIds(imgIds=img_id)
         target = coco.loadAnns(ann_ids)
 
@@ -52,6 +77,19 @@ class CocoDetection(TvCocoDetection):
         target = {'image_id': image_id, 'annotations': target}
 
         img, target = self.prepare(img, target)
+        if self.coco_ignores:
+            # print('ignoring!!')
+            ann_ids_ignore = self.coco_ignores.getAnnIds(imgIds=[img_id], iscrowd=None)
+            anns_ignore = self.coco_ignores.loadAnns(ann_ids_ignore)
+            img_array = np.array(img)
+
+            for ignore in anns_ignore:
+                bbox = ignore['bbox']
+                class_id, x1, y1, width, height = ignore['category_id'], bbox[0], bbox[1], bbox[2], bbox[3]
+                x_min, y_min, x_max, y_max = x1, y1, x1+width, y1+height
+                img_array[y_min:y_max, x_min:x_max] = [0, 0, 0]
+            img = Image.fromarray(img_array, 'RGB')
+
         if self._transforms is not None:
             img, target = self._transforms(img, target)
 
@@ -140,7 +178,7 @@ class ConvertCocoPolysToMask(object):
         return image, target
 
 
-def make_coco_transforms(image_set):
+def make_coco_transforms(image_set, img_side):
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -150,13 +188,13 @@ def make_coco_transforms(image_set):
     if image_set == 'train_vid' or image_set == "train_det" or image_set == "train_joint":
         return T.Compose([
             T.RandomHorizontalFlip(),
-            T.RandomResize([600], max_size=1000),
+            T.RandomResize([img_side], max_size=1000),
             normalize,
         ])
 
     if image_set == 'val':
         return T.Compose([
-            T.RandomResize([600], max_size=1000),
+            T.RandomResize([img_side], max_size=1000),
             normalize,
         ])
 
@@ -164,19 +202,33 @@ def make_coco_transforms(image_set):
 
 
 def build(image_set, args):
+    # root = Path(args.vid_path)
+    # assert root.exists(), f'provided COCO path {root} does not exist'
+    # mode = 'instances'
+    # PATHS = {
+    #     # "train_joint": [(root / "Data" / "DET", root / "annotations" / 'imagenet_det_30plus1cls_vid_train.json'), (root / "Data" / "VID", root / "annotations_10true" / 'imagenet_vid_train.json')],
+    #     "train_det": [(root / "Data" / "DET", root / "annotations" / 'imagenet_det_30plus1cls_vid_train.json')],
+    #     "train_vid": [(root / "Data" / "VID", root / "annotations" / 'imagenet_vid_train.json')],
+    #     "train_joint": [(root / "Data" , root / "annotations" / 'imagenet_vid_train_joint_30.json')],
+    #     "val": [(root / "Data" / "VID", root / "annotations" / 'imagenet_vid_val.json')],
+    # }
+    args.vid_path = args.data_root
     root = Path(args.vid_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
     PATHS = {
-        # "train_joint": [(root / "Data" / "DET", root / "annotations" / 'imagenet_det_30plus1cls_vid_train.json'), (root / "Data" / "VID", root / "annotations_10true" / 'imagenet_vid_train.json')],
-        "train_det": [(root / "Data" / "DET", root / "annotations" / 'imagenet_det_30plus1cls_vid_train.json')],
-        "train_vid": [(root / "Data" / "VID", root / "annotations" / 'imagenet_vid_train.json')],
-        "train_joint": [(root / "Data" , root / "annotations" / 'imagenet_vid_train_joint_30.json')],
-        "val": [(root / "Data" / "VID", root / "annotations" / 'imagenet_vid_val.json')],
+        "train_vid": [(root, os.path.join(root, 'UAV_train_every10.json'), True, os.path.join(root, 'UAV_train_every10_ignores.json'))],
+        "val": [(root, os.path.join(root, 'UAV_val_every10.json'), False, os.path.join(root, 'UAV_val_every10_ignores.json'))]
     }
+
+    # PATHS = {
+    #     "train_vid": [(root, os.path.join(root, 'VisDrone_VID_train_overfit.json'), True, None)],
+    #     "val": [(root, os.path.join(root, 'VisDrone_VID_train_overfit.json'), True, None)]
+    # }
     datasets = []
-    for (img_folder, ann_file) in PATHS[image_set]:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set), return_masks=args.masks, cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
+    print(args.img_side)
+    for (img_folder, ann_file, is_train, ann_ignores) in PATHS[image_set]:
+        dataset = CocoDetection(img_folder, ann_file, ann_ignores, transforms=make_coco_transforms(image_set, args.img_side), is_train=is_train, return_masks=args.masks, cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
         datasets.append(dataset)
     if len(datasets) == 1:
         return datasets[0]

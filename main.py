@@ -14,8 +14,9 @@ import json
 import random
 import time
 from pathlib import Path
-
+import os
 import numpy as np
+import json
 import torch
 from torch.utils.data import DataLoader
 import datasets
@@ -23,10 +24,13 @@ import datasets
 import datasets.samplers as samplers
 from datasets import build_dataset, get_coco_api_from_dataset
 from models import build_model
-
+import wandb
+from pycocotools.coco import COCO
+ 
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
+    parser.add_argument('--pretrainedmodel')
     parser.add_argument('--lr', default=2e-4, type=float)
     parser.add_argument('--lr_backbone_names', default=["backbone.0"], type=str, nargs='+')
     parser.add_argument('--lr_backbone', default=2e-5, type=float)
@@ -39,6 +43,12 @@ def get_args_parser():
     parser.add_argument('--lr_drop_epochs', default=None, type=int, nargs='+')
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
+    parser.add_argument('--img_side', default=600, type=int)
+    parser.add_argument('--freeze_backbone', default=False, action='store_true')
+    parser.add_argument('--num_classes', type=int, required=True)
+    parser.add_argument('--freeze_spatial', default=False, action='store_true')
+
+
     
     parser.add_argument('--num_ref_frames', default=3, type=int, help='number of reference frames')
 
@@ -114,6 +124,7 @@ def get_args_parser():
     parser.add_argument('--focal_alpha', default=0.25, type=float)
 
     # dataset parameters
+    parser.add_argument('--data_root')
     parser.add_argument('--dataset_file', default='vid_multi')
     parser.add_argument('--coco_path', default='./data/coco', type=str)
     parser.add_argument('--vid_path', default='./data/vid', type=str)
@@ -137,6 +148,7 @@ def get_args_parser():
 
 
 def main(args):
+    wandb.init(project="UAV_higher_res_single", name='_'.join(args.output_dir.split('/')))
     if args.dataset_file == "vid_single":
         from engine_single import evaluate, train_one_epoch
         import util.misc as utils
@@ -167,9 +179,15 @@ def main(args):
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
+    for n, k in model.named_parameters():
+        print(n, k.shape)
 
-    dataset_train = build_dataset(image_set='train_joint', args=args)
+    # dataset_train = build_dataset(image_set='train_joint', args=args)
+    # dataset_val = build_dataset(image_set='val', args=args)
+
+    dataset_train = build_dataset(image_set='train_vid', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
+    
 
     if args.distributed:
         print("11111")
@@ -202,8 +220,9 @@ def main(args):
                 break
         return out
 
-    for n, p in model_without_ddp.named_parameters():
-        print(n)
+    # for n, p in model_without_ddp.named_parameters():
+    #     print(f"{n}{p.shape}")
+        
 
     param_dicts = [
         {
@@ -230,7 +249,30 @@ def main(args):
     print(args.lr_drop_epochs)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, args.lr_drop_epochs)
 
+    # optimizer = torch.optim.AdamW(model_without_ddp.parameters(), lr=args.lr,
+    #                                   weight_decay=args.weight_decay)
+    
+    # from torch.optim.lr_scheduler import LambdaLR
+    # import math
+
+
+    
+
+    # def lr_lambda(current_step, total_steps=len(data_loader_train)*args.epochs, warmup_steps=len(data_loader_train)*int(0.2*args.epochs)):
+    #     if current_step < warmup_steps:
+    #         return float(current_step) / float(max(1, warmup_steps))
+    #     else:
+    #         progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+    #         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+    # lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
+
+
     if args.distributed:
+        print('**************************DISTRIBUTED***************')
+        print(f'device ids {args.gpu}')
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
@@ -240,12 +282,98 @@ def main(args):
         base_ds = get_coco_api_from_dataset(coco_val)
     else:
         base_ds = get_coco_api_from_dataset(dataset_val)
+    
+    filtered_ids = []
+    base_ds_img_ids = base_ds.getImgIds()
+    base_ds_img_infos = base_ds.loadImgs(base_ds_img_ids)
+    for info in base_ds_img_infos:
+        if info['is_vid_train_frame']:
+            filtered_ids.append(info['id'])
+    
+    filtered_ann_data = {
+            'categories': base_ds.dataset['categories'],
+            'images': [img for img in base_ds.dataset['images'] if img['id'] in filtered_ids],
+            'annotations': [ann for ann in base_ds.dataset['annotations'] if ann['image_id'] in filtered_ids]
+                }
+
+    filtered_json_path = './base_ds_filtered.json'
+    with open(filtered_json_path, 'w') as f:
+        json.dump(filtered_ann_data, f)
+    
+    base_ds = COCO(filtered_json_path)
+    os.remove(filtered_json_path)
 
     if args.frozen_weights is not None:
         checkpoint = torch.load(args.frozen_weights, map_location='cpu')
         model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
     output_dir = Path(args.output_dir)
+
+    # if args.pretrainedmodel:
+    #     # checkpoint = torch.load(args.pretrainedmodel)
+    #     # tmp_dict = checkpoint['model']
+    #     # for name, param in model_without_ddp.named_parameters(): # TODO PRIY
+    #     #     if ('temp' in name):
+    #     #         param.requires_grad = True
+    #     #     elif ('dynamic' in name):
+    #     #         param.requires_grad = True
+    #     #     else:
+    #     #         param.requires_grad = False
+    #     checkpoint = torch.load(args.pretrainedmodel)
+    #     checkpoint_state_dict = checkpoint['model']
+    #     curr_model_state_dict = model_without_ddp.state_dict()
+    #     conflict_params = []
+    #     for param_name in checkpoint_state_dict.keys():
+    #         if param_name in curr_model_state_dict.keys():
+    #             # need to check if same size
+    #             loaded_tensor_shape = checkpoint_state_dict[param_name].shape
+    #             current_model_tensor_shape = curr_model_state_dict[param_name].shape
+    #             if loaded_tensor_shape != current_model_tensor_shape:
+    #                 print(f"loaded checkpoint {param_name} is size {loaded_tensor_shape} and current model is size {current_model_tensor_shape}")
+    #                 conflict_params.append(param_name)
+    #         else:
+    #             print(f"loaded: {param_name} not in current model")
+    #     for conflict_param in conflict_params:
+    #         checkpoint_state_dict.pop(conflict_param)
+
+
+
+    #     missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint_state_dict, strict=False)
+    #     print("********************PRETRAINED LOADED*******************")
+    #     unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
+    #     if len(missing_keys) > 0:
+    #         print('Missing Keys: {}'.format(missing_keys))
+    #     if len(unexpected_keys) > 0:
+    #         print('Unexpected Keys: {}'.format(unexpected_keys))
+
+
+    #     for name, param in model_without_ddp.named_parameters():
+    #         if args.freeze_spatial:
+    #             if ('temp' in name):
+    #                 param.requires_grad = True
+    #             elif ('dynamic' in name):
+    #                 param.requires_grad = True
+    #             else:
+    #                 param.requires_grad = False
+    #         elif args.freeze_backbone:
+    #             if 'backbone' in name:
+    #                 param.requires_grad = False
+    #         else:
+    #             continue
+                
+    #     total_params_model = 0
+    #     total_params_with_grad = 0
+    #     for name, param in model_without_ddp.named_parameters():
+    #         if param.requires_grad:
+    #             total_params_with_grad += 1
+    #         total_params_model += 1
+    #     print("***************************************************************")
+    #     print(f"TOTAL PARAMS: {total_params_model}")
+    #     print(f"PARAMS WITH GRAD: {total_params_with_grad}")
+    #     print("***************************************************************")
+
+    
+
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -254,12 +382,12 @@ def main(args):
             checkpoint = torch.load(args.resume, map_location='cpu')
 
         if args.eval:
-            missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+            missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=True)
         else:
             tmp_dict = model_without_ddp.state_dict().copy()
             if args.coco_pretrain: # single frame baseline
                 for k, v in checkpoint['model'].items():
-                    if ('class_embed' not in k) :
+                    if ('class_embed' not in k):
                         tmp_dict[k] = v 
                     else:
                         print('k', k)
@@ -271,6 +399,10 @@ def main(args):
                         param.requires_grad = True
                     elif ('dynamic' in name):
                         param.requires_grad = True
+                    elif ('bbox_embed' in name):
+                        param.requires_grad = True
+                    elif ('class_embed' in name):
+                        param.requires_grad = True
                     else:
                         param.requires_grad = False
 
@@ -281,13 +413,37 @@ def main(args):
             print('Missing Keys: {}'.format(missing_keys))
         if len(unexpected_keys) > 0:
             print('Unexpected Keys: {}'.format(unexpected_keys))
+        
+        total_params_model = 0
+        total_params_with_grad = 0
+        for name, param in model_without_ddp.named_parameters():
+            if param.requires_grad:
+                total_params_with_grad += 1
+            total_params_model += 1
+        print("***************************************************************")
+        print(f"TOTAL PARAMS: {total_params_model}")
+        print(f"PARAMS WITH GRAD: {total_params_with_grad}")
+        print("***************************************************************")
 
-    if args.eval:
-        test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-                                              data_loader_val, base_ds, device, args.output_dir)
+    if args.eval: # TODO
+        test_stats, coco_evaluator, overall_result = evaluate(model, criterion, postprocessors,
+                                              data_loader_val, base_ds, device, args.output_dir, args.data_root)
         if args.output_dir:
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+        
+        output_path = os.path.join(args.output_dir, f"final_predicitions_{'_'.join(args.output_dir.split('/'))}.json")
+        print('saving results')
+        with open(output_path, 'w') as json_file:
+            json.dump(overall_result, json_file)
+        print('done saving')
         return
+
+    # if args.eval or True: # TODO
+    #     test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
+    #                                           data_loader_val, base_ds, device, args.output_dir, args.data_root)
+    #     if args.output_dir:
+    #         utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+    
 
     print("Start training")
     start_time = time.time()
@@ -325,6 +481,32 @@ def main(args):
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
+        if epoch%1==0:
+
+            test_stats, coco_evaluator, overall_result = evaluate(model, criterion, postprocessors,
+                                              data_loader_val, base_ds, device, args.output_dir, args.data_root)
+        
+
+            # cocoDt = coco_evaluator.coco_eval['bbox'].cocoDt
+            # cocoGt = coco_evaluator.coco_eval['bbox'].cocoGt
+
+            # cocoDt_dict = cocoDt.dataset
+            output_path = os.path.join(args.output_dir, f"cocoDt_epoch{epoch}.json")
+            print('saving results')
+            with open(output_path, 'w') as json_file:
+                json.dump(overall_result, json_file)
+            print('done saving')
+
+            wandb.log({"val_class_error": test_stats['class_error']})
+            wandb.log({"val_loss": test_stats['loss']})
+            wandb.log({"val_loss_ce": test_stats['loss_ce']})
+            wandb.log({"val_loss_bbox": test_stats['loss_bbox']})
+            wandb.log({"val_loss_giou": test_stats['loss_giou']})
+            wandb.log({"map50": test_stats['coco_eval_bbox'][1]})
+
+
+        if args.output_dir:
+            utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

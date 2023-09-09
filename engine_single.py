@@ -21,6 +21,7 @@ import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 from datasets.data_prefetcher_single import data_prefetcher
+import wandb
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -69,6 +70,14 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         optimizer.step()
 
+        wandb.log({"lr": optimizer.param_groups[0]["lr"]})
+        wandb.log({"class_error": loss_dict_reduced['class_error']})
+        wandb.log({"grad_norm": grad_total_norm})
+        wandb.log({"loss": loss_value})
+        wandb.log({"loss_ce": loss_dict_reduced_unscaled['loss_ce_unscaled'].item()})
+        wandb.log({"loss_bbox": loss_dict_reduced_unscaled['loss_bbox_unscaled'].item()})
+        wandb.log({"loss_giou": loss_dict_reduced_unscaled['loss_giou_unscaled'].item()})
+
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
@@ -83,7 +92,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir, data_root):
     model.eval()
     criterion.eval()
 
@@ -102,7 +111,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             data_loader.dataset.ann_folder,
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
-
+    iter_ = 0
+    overall_result = {}
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
@@ -130,6 +140,64 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         res = {target['image_id'].item(): output for target, output in zip(targets, results)}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
+
+        ############################################################################################
+        # LOG PREDICTION IMAGE TO WANDB TODO PRIY
+        ############################################################################################
+        for img_id_ in res.keys():
+            boxes = res[img_id_]['boxes']
+            labels = res[img_id_]['labels']
+            scores = res[img_id_]['scores'] 
+
+            boxes = boxes[labels!=0]
+            scores = scores[labels!=0]
+            labels = labels[labels!=0]
+
+            THRESHOLD = 0.0
+
+            boxes = boxes[scores>=THRESHOLD]
+            labels = labels[scores>=THRESHOLD]
+            scores = scores[scores>=THRESHOLD]
+
+            img_info = base_ds.loadImgs([img_id_])[0]
+            file_name = img_info['file_name']
+            import PIL
+            img_pil = PIL.Image.open(os.path.join(data_root, file_name))
+            width, height = img_pil.size
+            overall_result[img_id_] = {"predictions": {'box_data': [{'position': 
+                                                            {"xmin": 1.*(box[0].to(torch.float32).item())/width, 
+                                                            'xmax': 1.*(box[2].to(torch.float32).item())/width, 
+                                                            'ymin': 1.*(box[1].to(torch.float32).item())/height, 
+                                                            'ymax': 1.*(box[3].to(torch.float32).item())/height}, 
+                                                            "class_id": int(labels[i].item()),
+                                                            "score": round(1.*scores[i].to(torch.float32).item(), 3),
+                                                            "box_caption": f"score: {round(1.*scores[i].to(torch.float32).item(), 3)}, class: {base_ds.loadCats([int(labels[i].item())])[0]['name']}"
+                                                            } for i, box in enumerate(boxes)]}}
+
+
+        # if iter_ == 0:
+
+        #     THRESHOLD = 0.25
+
+        #     boxes = boxes[scores>=THRESHOLD]
+        #     labels = labels[scores>=THRESHOLD]
+        #     scores = scores[scores>=THRESHOLD]
+
+        #     boxes_wandb = {"predictions": {'box_data': [{'position': 
+        #                                                  {"minX": 1.*(box[0].to(torch.float32).item())/width, 
+        #                                                   'maxX': 1.*(box[2].to(torch.float32).item())/width, 
+        #                                                   'minY': 1.*(box[1].to(torch.float32).item())/height, 
+        #                                                   'maxY': 1.*(box[3].to(torch.float32).item())/height}, 
+        #                                                   "class_id": int(labels[i].item()),
+        #                                                   "box_caption": f"score: {round(1.*scores[i].to(torch.float32).item(), 3)}, class: {base_ds.loadCats([int(labels[i].item())])[0]['name']}"
+        #                                                   } for i, box in enumerate(boxes)]}}
+
+        #     # print(boxes_wandb)
+        #     img_wandb = wandb.Image(img_pil, boxes=boxes_wandb)
+        #     wandb.log({'test image': img_wandb})
+        # iter_ += 1
+        ############################################################################################
+        ############################################################################################
 
         if panoptic_evaluator is not None:
             res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
@@ -166,4 +234,4 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         stats['PQ_all'] = panoptic_res["All"]
         stats['PQ_th'] = panoptic_res["Things"]
         stats['PQ_st'] = panoptic_res["Stuff"]
-    return stats, coco_evaluator
+    return stats, coco_evaluator, overall_result

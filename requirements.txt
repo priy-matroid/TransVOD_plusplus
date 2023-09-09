@@ -4,3 +4,5 @@ cython
 scipy
 mmcv-full
 mmdet
+wandb
+timm

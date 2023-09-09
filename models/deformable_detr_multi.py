@@ -453,7 +453,8 @@ class MLP(nn.Module):
 
 
 def build(args):
-    num_classes = 31
+    # num_classes = 31 # TODO Change
+    num_classes = args.num_classes
     device = torch.device(args.device)
 
     if 'swin' in args.backbone:
@@ -464,7 +465,7 @@ def build(args):
         backbone = build_backbone(args)
     # backbone = build_backbone(args)
 
-    transformer = build_deforamble_transformer(args)
+    transformer = build_deforamble_transformer(args, num_classes)
     model = DeformableDETR(
         backbone,
         transformer,
@@ -476,6 +477,11 @@ def build(args):
         with_box_refine=args.with_box_refine,
         two_stage=args.two_stage,
     )
+
+    ##############Check model num params compared to backbone ####################
+    backbone_num_params = sum(p.numel() for p in backbone.parameters())
+    model_num_params = sum(p.numel() for p in model.parameters())
+
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
     matcher = build_matcher(args)

@@ -33,9 +33,9 @@ class DeformableTransformer(nn.Module):
                  activation="relu", return_intermediate_dec=False,
                  num_feature_levels=4, dec_n_points=4,  enc_n_points=4,
                  two_stage=False, two_stage_num_proposals=300, num_query=300, n_temporal_decoder_layers = 1,
-                 num_ref_frames = 3, fixed_pretrained_model = False, args=None):
+                 num_ref_frames = 3, fixed_pretrained_model = False, args=None, num_classes=8):
         super().__init__()
-
+        self.num_classes = num_classes
         self.d_model = d_model
         self.nhead = nhead
         self.two_stage = two_stage
@@ -81,7 +81,7 @@ class DeformableTransformer(nn.Module):
         self.temporal_query_layer2 = TemporalQueryEncoderLayer(d_model, dim_feedforward, dropout, activation, nhead)
         self.temporal_query_layer3 = TemporalQueryEncoderLayer(d_model, dim_feedforward, dropout, activation, nhead)
         
-        num_classes = 31
+        num_classes = self.num_classes
 
         # QRF Module
         self.dynamic_layer_for_current_query1 = RCNNHead(self.cfg, d_model, num_classes, dim_feedforward, nhead, dropout, activation)
@@ -812,7 +812,7 @@ def _get_activation_fn(activation):
     raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
 
-def build_deforamble_transformer(args):
+def build_deforamble_transformer(args, num_classes):
     return DeformableTransformer(
         d_model=args.hidden_dim,
         nhead=args.nheads,
@@ -831,6 +831,7 @@ def build_deforamble_transformer(args):
         n_temporal_decoder_layers = args.n_temporal_decoder_layers, 
         num_ref_frames = args.num_ref_frames,
         fixed_pretrained_model = args.fixed_pretrained_model,
+        num_classes = num_classes,
         args = args)
 
 
